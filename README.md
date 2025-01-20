@@ -1,4 +1,4 @@
-# ticker
+# tickers
 
 A terminal stock ticker display with real time updates.
 
