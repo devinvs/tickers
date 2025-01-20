@@ -1,0 +1,148 @@
+#!/usr/bin/python
+import os
+import time
+import math
+import re
+import sys
+import json
+import threading
+from datetime import datetime
+import requests as r
+
+tickers = [
+    "qld",
+    "meta",
+    "rivn",
+    "qqq",
+    "mstz",
+    "tslq",
+    "nvda",
+    "mu",
+    "avgo",
+    "cvna"
+]
+stocks = []
+
+def get_stock(ticker):
+    res = r.get(
+        f"https://api.nasdaq.com/api/quote/{ticker}/info?assetclass=stocks",
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.121 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive"
+        }
+    )
+
+    data = json.loads(res.text)
+    if data["data"] is None:
+        res = r.get(
+            f"https://api.nasdaq.com/api/quote/{ticker}/info?assetclass=etf",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.121 Safari/537.36",
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive"
+            }
+        )
+        data = json.loads(res.text)
+    
+    return data
+
+def refresh_stocks():
+    global stocks
+    local_stocks = []
+
+
+    for ticker in tickers:
+        data = get_stock(ticker)
+        local_stocks.append({
+            "name": ticker,
+            "change": float(data["data"]["primaryData"]["percentageChange"][:-1])
+        })
+
+    stocks = local_stocks
+
+# calculate the length of a sequence after all its terminal characters have been removed
+csi_re = re.compile("\x1b\\[\\d*m")
+def termlen(s):
+    return len(csi_re.sub("", s))
+
+# get idx of n'th terminal character
+def termidx(s, n):
+    i = 0
+    ri = 0
+    in_seq = False
+
+    for c in s:
+        if i == n:
+            return ri
+        
+        ri += 1
+        if in_seq and c == "m":
+            in_seq = False
+            continue
+
+        if in_seq:
+            continue
+
+        if c == "\x1b":
+            in_seq = True
+            continue
+
+        i += 1
+
+    return len(s)
+
+
+def draw(width, i):
+    global stocks
+    # first create the whole stock "string"
+    up = "\x1b[32m🞁"
+    down = "\x1b[31m🞃"
+    ss = "".join([f"\x1b[1m{x['name'].upper()}\x1b[0m {up if x['change'] >= 0.0 else down} {x['change']:.2f}\x1b[0m  " for x in stocks])
+
+    # tile it across the width
+    slen = termlen(ss)
+
+    if slen == 0:
+        sys.stdout.write("\x1b[2J\x1b[H")
+        sys.stdout.write("awaiting stock data...")
+        sys.stdout.flush()
+        return
+    
+    i %= slen
+    n = int(math.ceil(width / slen)) + 1
+    ss *= n
+
+    # clip it
+    start = termidx(ss, i)
+    end = termidx(ss, i+width)
+    ss = ss[start:end]
+
+    # send it
+    sys.stdout.write("\x1b[2J\x1b[H")
+    sys.stdout.write(ss)
+    sys.stdout.write("\x1b[0m")
+    sys.stdout.flush()
+
+
+def draw_loop():
+    size = os.get_terminal_size()
+    i = 0
+
+    while True:
+        draw(size.columns, i)
+        size = os.get_terminal_size()
+        time.sleep(0.35)
+        i += 1
+
+
+if __name__ == "__main__":
+    t = threading.Thread(target=draw_loop)
+    t.start()
+
+    while True:
+        refresh_stocks()
+        time.sleep(10)
+
